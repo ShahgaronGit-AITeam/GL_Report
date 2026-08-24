@@ -209,5 +209,6 @@ def get_report(payload: ReportRequest):
     report_name, records = _get_report_records(payload.document_content)
     logger.info("Returning %d records for report_name=%s", len(records), report_name)
     return JSONResponse(
-        content={"report_name": report_name, "count": len(records), "data": records}
+        content={"report_name": report_name, "count": len(records), "data": records,"items_count": sum(len(record.get("items", [])) for record in records),
+ }
     )
