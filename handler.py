@@ -36,6 +36,73 @@ class CompareRequest(BaseModel):
         ..., description="Base64-encoded ZIP for the Supplier Balance Aging report."
     )
 
+class XMLRequest(BaseModel):
+    xml_data: str
+
+def parse_gl_xml(xml_data: str):
+    root = ET.fromstring(xml_data)
+
+    for elem in root.iter():
+        if "}" in elem.tag:
+            elem.tag = elem.tag.split("}", 1)[1]
+
+    def text(parent, tag, default=""):
+        node = parent.find(tag) if parent is not None else None
+        return node.text.strip() if node is not None and node.text else default
+
+    source_totals = defaultdict(
+        lambda: {"count": 0, "total_debit": 0.0, "total_credit": 0.0}
+    )
+
+    for g3 in root.findall(".//G_2/G_3"):
+        source = text(g3, "SOURCE_DESC")
+        debit = float(text(g3, "ACCOUNTED_DR", "0") or 0)
+        credit = float(text(g3, "ACCOUNTED_CR", "0") or 0)
+
+        source_totals[source]["count"] += 1
+        source_totals[source]["total_debit"] += debit
+        source_totals[source]["total_credit"] += credit
+
+    g5 = root.find(".//G_5")
+    g6 = root.find(".//G_6")
+
+    code = text(g5, "CODE_COMBINATION")
+
+    begin_debit = float(text(g5, "BEGIN_BALANCE_DR", "0") or 0)
+    begin_credit = float(text(g5, "BEGIN_BALANCE_CR", "0") or 0)
+
+    ending_debit = float(text(g6, "CLOSING_BALANCE_DR", "0") or 0)
+    ending_credit = float(text(g6, "CLOSING_BALANCE_CR", "0") or 0)
+
+    period_debit = sum(x["total_debit"] for x in source_totals.values())
+    period_credit = sum(x["total_credit"] for x in source_totals.values())
+
+    gl_balance = {
+        "codeCombination": code,
+        "beginBalanceDebit": begin_debit,
+        "beginBalanceCredit": begin_credit,
+        "beginBalanceNetAmount": begin_debit - begin_credit,
+        "periodBalanceDebit": period_debit,
+        "periodBalanceCredit": period_credit,
+        "endingBalanceDebit": ending_debit,
+        "endingBalanceCredit": ending_credit,
+        "endingBalanceNetAmount": ending_debit - ending_credit
+    }
+
+    return {
+        "GLBalances": [gl_balance],
+        "TotalAmountsBySource": [
+            {
+                "source": source,
+                "count": values["count"],
+                "totalDebit": round(values["total_debit"], 2),
+                "totalCredit": round(values["total_credit"], 2),
+                "sourceNetAmount": round(values["total_debit"] - values["total_credit"], 2)
+            }
+            for source, values in source_totals.items()
+        ]
+    }
+
 
 def _decode_base64(document_content: str) -> bytes:
     logger.info("Decoding base64 document content (%d chars)", len(document_content))
@@ -291,3 +358,6 @@ def get_report(payload: ReportRequest):
     return JSONResponse(
         content={"report_name": report_name, "count": len(records), "data": records}
     )
+@app.post("/parseSingleCCCustomAARData")
+def parse_gl(request: XMLRequest):
+    return parse_gl_xml(request.xml_data)
