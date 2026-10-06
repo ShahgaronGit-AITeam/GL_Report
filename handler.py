@@ -328,6 +328,36 @@ def _parse_report(xml_bytes: bytes) -> tuple[str, list[dict]]:
 
         logger.info("Parsed %d %s rows", len(results), report_name)
         return report_name, results
+    elif "ARXAGFW" in xml_text:
+        report_name = "Receivables Aging by General Ledger Account Report"
+        logger.info("Detected report type: %s (ARXAGFW)", report_name)
+
+        groups = root.findall(".//G_INV_CUST")
+
+        results = []
+
+        for group in groups:
+            flex_type = group.find("./FLEX_TYPE")
+            balance = group.find("./TOTAL_CUST_INV_BALANCE")
+
+            results.append(
+            {
+            "CodeCombination": flex_type.text.strip() if flex_type is not None and flex_type.text else None,
+            "Amount": balance.text.strip() if balance is not None and balance.text else None,
+           }
+    )
+        if not results:
+            logger.error(
+               "Receivables Aging XML had no FLEX_TYPE/TOTAL_CUST_INV_BALANCE rows"
+        )
+            raise HTTPException(
+            status_code=422,
+            detail="Receivables Aging XML had no FLEX_TYPE/TOTAL_CUST_INV_BALANCE rows"
+        )
+
+        logger.info("Parsed %d %s rows", len(results), report_name)
+
+        return report_name, results
     else:
         logger.error("Unknown report type. XML does not contain GLTRBAL or DATA_DS.")
         raise HTTPException(
